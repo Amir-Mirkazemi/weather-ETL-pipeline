@@ -1,23 +1,17 @@
 import requests
 import sqlite3
 from datetime import datetime
+import os
 
-# THIS URL IS 100% CORRECT: It includes the required 'current' parameters
+# Verified Open-Meteo URL
 URL = "https://api.open-meteo.com"
 
 def run_pipeline():
     try:
-        print(f"Requesting data from: {URL}")
         response = requests.get(URL, timeout=20)
-        
-        # Check if the server actually sent data
-        if response.status_code != 200:
-            print(f"❌ Server Error {response.status_code}: {response.text}")
-            return
-
+        response.raise_for_status()
         data = response.json()['current']
 
-        # 2. TRANSFORM: Prepare data for database
         entry = (
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             float(data['temperature_2m']),
@@ -25,8 +19,11 @@ def run_pipeline():
             "London"
         )
 
-        # 3. LOAD: Save to SQLite
-        conn = sqlite3.connect('weather_data.db')
+        # Get the directory where main.py is located to ensure file is saved correctly
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        db_path = os.path.join(base_dir, 'weather_data.db')
+
+        conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         cursor.execute('''CREATE TABLE IF NOT EXISTS weather 
                        (timestamp TEXT, temp_c REAL, humidity INTEGER, city TEXT)''')
@@ -34,10 +31,10 @@ def run_pipeline():
         conn.commit()
         conn.close()
         
-        print(f"✅ SUCCESS: Logged {entry}")
+        print(f"✅ SUCCESS: Saved {entry} to {db_path}")
 
     except Exception as e:
-        print(f"❌ PIPELINE ERROR: {str(e)}")
+        print(f"❌ ERROR: {str(e)}")
         exit(1)
 
 if __name__ == "__main__":
