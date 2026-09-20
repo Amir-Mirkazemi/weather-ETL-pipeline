@@ -1,6 +1,8 @@
-name: Daily Weather ETL
+name: Hourly Weather ETL
 on:
   workflow_dispatch: # Allows you to run it manually for testing
+  schedule:
+    - cron: '0 * * * *' # runs at the top of every hour
 
 jobs:
   build:
