@@ -1,6 +1,6 @@
 # Weather ETL Pipeline
 
-A lightweight, fully automated ETL pipeline that extracts live weather data, transforms it into a clean structured record, and loads it into a SQLite database — orchestrated end-to-end with GitHub Actions, with no external scheduler or server to manage.
+Automated ETL pipeline extracting live weather data hourly via GitHub Actions, with fail-loud error handling and typed SQLite storage.
 
 ## What it does
 
