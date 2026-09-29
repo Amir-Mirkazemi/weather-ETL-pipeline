@@ -21,6 +21,19 @@ def get_todays_location():
     return LOCATIONS[day_of_year % len(LOCATIONS)]
 
 
+def is_valid_reading(temp_c, humidity):
+    """Reject physically implausible readings instead of storing bad data.
+
+    Earth's recorded surface temperatures never exceed roughly -90C to 60C,
+    and relative humidity is a percentage, so it must fall within 0-100.
+    """
+    if not (-90 <= temp_c <= 60):
+        return False
+    if not (0 <= humidity <= 100):
+        return False
+    return True
+
+
 def run_pipeline():
     location = get_todays_location()
     url = (
@@ -40,12 +53,19 @@ def run_pipeline():
             return
 
         data = response.json()['current']
+        temp_c = float(data['temperature_2m'])
+        humidity = int(data['relative_humidity_2m'])
+
+        # DATA QUALITY CHECK: don't let a garbled API response poison the table
+        if not is_valid_reading(temp_c, humidity):
+            print(f"❌ REJECTED: implausible reading temp={temp_c}, humidity={humidity} — not inserted")
+            exit(1)
 
         # TRANSFORM: Format for SQLite
         entry = (
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            float(data['temperature_2m']),
-            int(data['relative_humidity_2m']),
+            temp_c,
+            humidity,
             f"{location['city']}, {location['country']}"
         )
 
