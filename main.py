@@ -2,6 +2,7 @@ import requests
 import sqlite3
 from datetime import datetime
 import os
+import time
 
 # Rotates through these locations by day-of-year, so a different country is
 # picked each day (same one all day, since the job runs hourly).
@@ -33,6 +34,18 @@ def is_valid_reading(temp_c, humidity):
         return False
     return True
 
+def fetch_with_retry(url, headers, retries=3, delay=5):
+    for attempt in range(1, retries + 1):
+        try:
+            response = requests.get(url, headers=headers, timeout=20)
+            if response.status_code == 200:
+                return response
+            print(f"⚠️ Attempt {attempt}/{retries} got status {response.status_code}, retrying...")
+        except requests.exceptions.RequestException as e:
+            print(f"⚠️ Attempt {attempt}/{retries} network error: {e}, retrying...")
+        if attempt < retries:
+            time.sleep(delay)
+    return None
 
 def run_pipeline():
     location = get_todays_location()
@@ -46,10 +59,10 @@ def run_pipeline():
         print(f"Requesting data from: {url}")
         # Standard headers to avoid bot detection
         headers = {'User-Agent': 'PythonWeatherPipeline/1.0'}
-        response = requests.get(url, headers=headers, timeout=20)
+        response = fetch_with_retry(url, headers)
 
-        if response.status_code != 200:
-            print(f"❌ Server Error {response.status_code}: {response.text}")
+        if response is None:
+            print("❌ All retry attempts failed")
             exit(1)
 
         data = response.json()['current']
