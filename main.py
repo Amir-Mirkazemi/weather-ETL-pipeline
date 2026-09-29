@@ -50,7 +50,7 @@ def run_pipeline():
 
         if response.status_code != 200:
             print(f"❌ Server Error {response.status_code}: {response.text}")
-            return
+            exit(1)
 
         data = response.json()['current']
         temp_c = float(data['temperature_2m'])
