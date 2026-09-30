@@ -1,5 +1,7 @@
 # Weather ETL Pipeline
 
+![Hourly Weather ETL](https://github.com/Amir-Mirkazemi/weather-ETL-pipeline/actions/workflows/hourly_etl.yml/badge.svg)
+
 Automated ETL pipeline extracting live weather data hourly via GitHub Actions, with fail-loud error handling and typed SQLite storage.
 
 ## What it does
