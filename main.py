@@ -1,3 +1,4 @@
+import json
 import requests
 import sqlite3
 from datetime import datetime, timezone
@@ -11,15 +12,13 @@ logger = logging.getLogger(__name__)
 
 # Rotates through these locations by day-of-year, so a different country is
 # picked each day (same one all day, since the job runs hourly).
-LOCATIONS = [
-    {"city": "London", "country": "UK", "lat": 51.5074, "lon": -0.1278},
-    {"city": "Tehran", "country": "Iran", "lat": 35.6892, "lon": 51.3890},
-    {"city": "New York", "country": "USA", "lat": 40.7128, "lon": -74.0060},
-    {"city": "Tokyo", "country": "Japan", "lat": 35.6762, "lon": 139.6503},
-    {"city": "Sydney", "country": "Australia", "lat": -33.8688, "lon": 151.2093},
-    {"city": "Cairo", "country": "Egypt", "lat": 30.0444, "lon": 31.2357},
-    {"city": "Sao Paulo", "country": "Brazil", "lat": -23.5505, "lon": -46.6333},
-]
+def load_locations() -> List[Dict]:
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'locations.json')
+    with open(path) as f:
+        return json.load(f)
+
+
+LOCATIONS = load_locations()
 
 
 def get_todays_location() -> Dict:
