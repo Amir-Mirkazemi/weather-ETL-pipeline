@@ -30,4 +30,5 @@ jobs:
           git config --global user.email "action@github.com"
           git add .
           git commit -m "Automated update: Weather Data" || exit 0
+          git pull --rebase origin main
           git push
