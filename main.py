@@ -3,6 +3,7 @@ import sqlite3
 from datetime import datetime
 import os
 import time
+from typing import Optional, Dict, List
 
 # Rotates through these locations by day-of-year, so a different country is
 # picked each day (same one all day, since the job runs hourly).
@@ -17,12 +18,12 @@ LOCATIONS = [
 ]
 
 
-def get_todays_location():
+def get_todays_location() -> Dict:
     day_of_year = datetime.now().timetuple().tm_yday
     return LOCATIONS[day_of_year % len(LOCATIONS)]
 
 
-def is_valid_reading(temp_c, humidity):
+def is_valid_reading(temp_c: float, humidity: int) -> bool:
     """Reject physically implausible readings instead of storing bad data.
 
     Earth's recorded surface temperatures never exceed roughly -90C to 60C,
@@ -34,7 +35,7 @@ def is_valid_reading(temp_c, humidity):
         return False
     return True
 
-def fetch_with_retry(url, headers, retries=3, delay=5):
+def fetch_with_retry(url: str, headers: dict, retries: int = 3, delay: int = 5) -> Optional[requests.Response]:
     for attempt in range(1, retries + 1):
         try:
             response = requests.get(url, headers=headers, timeout=20)
@@ -47,7 +48,7 @@ def fetch_with_retry(url, headers, retries=3, delay=5):
             time.sleep(delay)
     return None
 
-def run_pipeline():
+def run_pipeline() -> None:
     location = get_todays_location()
     url = (
         "https://api.open-meteo.com/v1/forecast"
