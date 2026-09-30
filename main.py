@@ -4,6 +4,10 @@ from datetime import datetime
 import os
 import time
 from typing import Optional, Dict, List
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
 
 # Rotates through these locations by day-of-year, so a different country is
 # picked each day (same one all day, since the job runs hourly).
@@ -41,9 +45,9 @@ def fetch_with_retry(url: str, headers: dict, retries: int = 3, delay: int = 5) 
             response = requests.get(url, headers=headers, timeout=20)
             if response.status_code == 200:
                 return response
-            print(f"⚠️ Attempt {attempt}/{retries} got status {response.status_code}, retrying...")
+            logger.warning(f"⚠️ Attempt {attempt}/{retries} got status {response.status_code}, retrying...")
         except requests.exceptions.RequestException as e:
-            print(f"⚠️ Attempt {attempt}/{retries} network error: {e}, retrying...")
+            logger.warning(f"⚠️ Attempt {attempt}/{retries} network error: {e}, retrying...")
         if attempt < retries:
             time.sleep(delay)
     return None
@@ -56,14 +60,14 @@ def run_pipeline() -> None:
         "&current=temperature_2m,relative_humidity_2m"
     )
     try:
-        print(f"Today's location: {location['city']}, {location['country']}")
-        print(f"Requesting data from: {url}")
+        logger.info(f"Today's location: {location['city']}, {location['country']}")
+        logger.info(f"Requesting data from: {url}")
         # Standard headers to avoid bot detection
         headers = {'User-Agent': 'PythonWeatherPipeline/1.0'}
         response = fetch_with_retry(url, headers)
 
         if response is None:
-            print("❌ All retry attempts failed")
+            logger.error("❌ All retry attempts failed")
             exit(1)
 
         data = response.json()['current']
@@ -72,7 +76,7 @@ def run_pipeline() -> None:
 
         # DATA QUALITY CHECK: don't let a garbled API response poison the table
         if not is_valid_reading(temp_c, humidity):
-            print(f"❌ REJECTED: implausible reading temp={temp_c}, humidity={humidity} — not inserted")
+            logger.error(f"❌ REJECTED: implausible reading temp={temp_c}, humidity={humidity} — not inserted")
             exit(1)
 
         # TRANSFORM: Format for SQLite
@@ -93,10 +97,10 @@ def run_pipeline() -> None:
         conn.commit()
         conn.close()
 
-        print(f"✅ SUCCESS: Logged {entry} to {db_path}")
+        logger.info(f"✅ SUCCESS: Logged {entry} to {db_path}")
 
     except Exception as e:
-        print(f"❌ PIPELINE ERROR: {str(e)}")
+        logger.error(f"❌ PIPELINE ERROR: {str(e)}")
         exit(1)
 
 
