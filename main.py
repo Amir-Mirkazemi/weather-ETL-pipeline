@@ -1,6 +1,6 @@
 import requests
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 import time
 from typing import Optional, Dict, List
@@ -23,7 +23,7 @@ LOCATIONS = [
 
 
 def get_todays_location() -> Dict:
-    day_of_year = datetime.now().timetuple().tm_yday
+    day_of_year = datetime.now(timezone.utc).timetuple().tm_yday
     return LOCATIONS[day_of_year % len(LOCATIONS)]
 
 
@@ -81,7 +81,7 @@ def run_pipeline() -> None:
 
         # TRANSFORM: Format for SQLite
         entry = (
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
             temp_c,
             humidity,
             f"{location['city']}, {location['country']}"
