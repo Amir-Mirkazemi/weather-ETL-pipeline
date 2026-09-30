@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # Rotates through these locations by day-of-year, so a different country is
 # picked each day (same one all day, since the job runs hourly).
 def load_locations() -> List[Dict]:
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'locations.json')
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.github', 'locations.json')
     with open(path) as f:
         return json.load(f)
 
