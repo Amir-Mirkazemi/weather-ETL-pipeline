@@ -1,19 +1,24 @@
 import json
-import requests
-import sqlite3
-from datetime import datetime, timezone
-import os
-import time
-from typing import Optional, Dict, List
 import logging
+import os
+import sqlite3
+import sys
+import time
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Tuple
+
+import requests
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# Rotates through these locations by day-of-year, so a different country is
-# picked each day (same one all day, since the job runs hourly).
-def load_locations() -> List[Dict]:
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.github', 'locations.json')
+API_URL = "https://api.open-meteo.com/v1/forecast"
+LOCATIONS_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), ".github", "locations.json"
+)
+
+
+def load_locations(path: str = LOCATIONS_PATH) -> List[Dict]:
     with open(path) as f:
         return json.load(f)
 
@@ -21,86 +26,136 @@ def load_locations() -> List[Dict]:
 LOCATIONS = load_locations()
 
 
-def get_todays_location() -> Dict:
-    day_of_year = datetime.now(timezone.utc).timetuple().tm_yday
-    return LOCATIONS[day_of_year % len(LOCATIONS)]
+def get_todays_location(now: Optional[datetime] = None) -> Dict:
+    """Pick a location by day-of-year (UTC): same city all day, rotates daily."""
+    now = now or datetime.now(timezone.utc)
+    return LOCATIONS[now.timetuple().tm_yday % len(LOCATIONS)]
 
 
 def is_valid_reading(temp_c: float, humidity: int) -> bool:
-    """Reject physically implausible readings instead of storing bad data.
-
-    Earth's recorded surface temperatures never exceed roughly -90C to 60C,
-    and relative humidity is a percentage, so it must fall within 0-100.
-    """
+    """Reject physically implausible readings instead of storing bad data."""
     if not (-90 <= temp_c <= 60):
         return False
     if not (0 <= humidity <= 100):
         return False
     return True
 
-def fetch_with_retry(url: str, headers: dict, retries: int = 3, delay: int = 5) -> Optional[requests.Response]:
+
+def build_url(location: Dict) -> str:
+    return (
+        f"{API_URL}?latitude={location['lat']}&longitude={location['lon']}"
+        "&current=temperature_2m,relative_humidity_2m"
+    )
+
+
+def fetch_with_retry(
+    url: str, headers: dict, retries: int = 3, delay: int = 5
+) -> Optional[requests.Response]:
     for attempt in range(1, retries + 1):
         try:
             response = requests.get(url, headers=headers, timeout=20)
             if response.status_code == 200:
                 return response
-            logger.warning(f"⚠️ Attempt {attempt}/{retries} got status {response.status_code}, retrying...")
+            logger.warning(
+                "Attempt %d/%d got status %s, retrying", attempt, retries, response.status_code
+            )
         except requests.exceptions.RequestException as e:
-            logger.warning(f"⚠️ Attempt {attempt}/{retries} network error: {e}, retrying...")
+            logger.warning("Attempt %d/%d network error: %s", attempt, retries, e)
         if attempt < retries:
             time.sleep(delay)
     return None
 
-def run_pipeline() -> None:
-    location = get_todays_location()
-    url = (
-        "https://api.open-meteo.com/v1/forecast"
-        f"?latitude={location['lat']}&longitude={location['lon']}"
-        "&current=temperature_2m,relative_humidity_2m"
+
+def parse_current(payload: dict) -> Tuple[float, int, str]:
+    """Return (temp_c, humidity, observed_at) from an Open-Meteo response."""
+    current = payload["current"]
+    return (
+        float(current["temperature_2m"]),
+        int(current["relative_humidity_2m"]),
+        str(current["time"]),
     )
+
+
+def init_db(conn: sqlite3.Connection) -> None:
+    """Create the table if needed and migrate older databases in place."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS weather
+           (timestamp TEXT, temp_c REAL, humidity INTEGER, city TEXT, observed_at TEXT)"""
+    )
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(weather)")}
+    if "observed_at" not in columns:  # databases created before this column existed
+        conn.execute("ALTER TABLE weather ADD COLUMN observed_at TEXT")
+    # Same city + same API observation can only be stored once (rerun-safe).
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_weather_city_observed "
+        "ON weather (city, observed_at)"
+    )
+    conn.commit()
+
+
+def save_reading(conn: sqlite3.Connection, entry: tuple) -> bool:
+    """Insert one row; return False if this observation was already stored."""
+    cur = conn.execute(
+        "INSERT OR IGNORE INTO weather "
+        "(timestamp, temp_c, humidity, city, observed_at) VALUES (?, ?, ?, ?, ?)",
+        entry,
+    )
+    conn.commit()
+    return cur.rowcount == 1
+
+
+def run_pipeline(db_path: Optional[str] = None) -> None:
+    db_path = (
+        db_path
+        or os.environ.get("WEATHER_DB_PATH")
+        or os.path.join(os.getcwd(), "weather_data.db")
+    )
+    location = get_todays_location()
+    city_label = f"{location['city']}, {location['country']}"
     try:
-        logger.info(f"Today's location: {location['city']}, {location['country']}")
-        logger.info(f"Requesting data from: {url}")
-        # Standard headers to avoid bot detection
-        headers = {'User-Agent': 'PythonWeatherPipeline/1.0'}
-        response = fetch_with_retry(url, headers)
+        logger.info("Today's location: %s", city_label)
+        # Identify the client politely to the public API.
+        headers = {"User-Agent": "PythonWeatherPipeline/1.0"}
+        response = fetch_with_retry(build_url(location), headers)
 
         if response is None:
-            logger.error("❌ All retry attempts failed")
-            exit(1)
+            logger.error("All retry attempts failed")
+            sys.exit(1)
 
-        data = response.json()['current']
-        temp_c = float(data['temperature_2m'])
-        humidity = int(data['relative_humidity_2m'])
+        temp_c, humidity, observed_at = parse_current(response.json())
 
-        # DATA QUALITY CHECK: don't let a garbled API response poison the table
+        # Data-quality gate: never let a garbled response reach the table.
         if not is_valid_reading(temp_c, humidity):
-            logger.error(f"❌ REJECTED: implausible reading temp={temp_c}, humidity={humidity} — not inserted")
-            exit(1)
+            logger.error(
+                "REJECTED implausible reading temp=%s humidity=%s; not inserted",
+                temp_c,
+                humidity,
+            )
+            sys.exit(1)
 
-        # TRANSFORM: Format for SQLite
         entry = (
-            datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),  # ingested_at
             temp_c,
             humidity,
-            f"{location['city']}, {location['country']}"
+            city_label,
+            observed_at,  # when the API says the reading was taken
         )
 
-        #finds the DB file
-        db_path = os.path.join(os.getcwd(), 'weather_data.db')
         conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        cursor.execute('''CREATE TABLE IF NOT EXISTS weather
-                       (timestamp TEXT, temp_c REAL, humidity INTEGER, city TEXT)''')
-        cursor.execute("INSERT INTO weather VALUES (?, ?, ?, ?)", entry)
-        conn.commit()
-        conn.close()
+        try:
+            init_db(conn)
+            inserted = save_reading(conn, entry)
+        finally:
+            conn.close()
 
-        logger.info(f"✅ SUCCESS: Logged {entry} to {db_path}")
+        if inserted:
+            logger.info("Loaded %s into %s", entry, db_path)
+        else:
+            logger.info("Observation %s for %s already stored; skipped", observed_at, city_label)
 
-    except Exception as e:
-        logger.error(f"❌ PIPELINE ERROR: {str(e)}")
-        exit(1)
+    except Exception as e:  # any other failure must also fail the run
+        logger.error("PIPELINE ERROR: %s", e)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
